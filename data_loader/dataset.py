@@ -211,9 +211,6 @@ class MAGDataset(object):
             child_node_id = tx_id2node_id[edge[1].tx_id]
             edges.append([parent_node_id, child_node_id])
 
-        # print("entry:", list(node_id2tx_id.items())[0][1])
-        # print("embedding0", embeddings[list(node_id2tx_id.items())[0][1]])
-
         node_features = np.zeros(embeddings.vectors.shape)
         for node_id, tx_id in node_id2tx_id.items():
             node_features[node_id, :] = embeddings[tx_id]
@@ -334,6 +331,7 @@ class MaskedGraphDataset(Dataset):
         self.full_graph = graph_dataset.g_full.to_networkx()
 
         # add node feature vector
+        print("node features shape:", self.node_features.shape)
         self.kv = KeyedVectors(vector_size=self.node_features.shape[1])
         self.kv.add([str(i) for i in range(len(self.vocab))], self.node_features.numpy())
 
@@ -521,7 +519,9 @@ class MaskedGraphDataset(Dataset):
     '''
     def _get_subgraph(self, query_node, anchor_node, instance_mode, only_anchor=False):
         # if current anchor_node is in train/validation/test set then, its not in the existing taxonomy, hence, we get only the node itself in its ego-network
-        if self.dep_aware and (random.random() > self.ego_net_prob or only_anchor):
+        # if self.dep_aware and (random.random() > self.ego_net_prob or only_anchor):
+        if only_anchor or (self.dep_aware and random.random() > self.ego_net_prob):
+        # if only_anchor:
             nodes = [anchor_node]
             nodes_pos = [1]
             g = dgl.DGLGraph()
