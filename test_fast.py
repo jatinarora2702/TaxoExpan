@@ -96,6 +96,10 @@ def main(config, args_outer):
     for anchor in tqdm(candidate_positions):
         anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0)
     
+    candidate_positions.extend(test_dataset.node_list)
+    for anchor in tqdm(test_dataset.node_list):
+        anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0, True)
+    
     if args_outer.batch_size == -1:  # small dataset with only one batch
         logger.info('Small batch mode')
         # obtain graph representation

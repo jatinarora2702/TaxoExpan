@@ -38,7 +38,7 @@
 
 6) modify model.py and model_zoo.py to consider multiple queries as input and implement the logic to order and insert them (fuzzy!): what would be the output of this?? (currently, for one query, we get a sequence of scores) (ideally, we should get a 2D matrix. The values in this matrix should be **comparable** with one another!)
 
-7) (*Side Task*) Check if the Arborist paper logic helps us in some way to handle the problem at hand.
+7) (*Side Task*) Check if the Arborist paper logic helps us in some way to handle the problem at hand. [**done**]
 
 ### Problems to tackle:
 
@@ -69,4 +69,4 @@ For running on the dependency-aware dataset, use the below config:
 CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python train.py --config ./config_files/config.20200418.mag.json
 
 ### Testing
-CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python test_fast.py --resume ./saved/models/TaxoExpan-MAG-CS/0415_162203/model_best.pth --case ./case_studies/infer_results_model_0415_162203.tsv
+CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python test_fast.py --resume ./saved/models/MAG-CS/0415_162203/model_best.pth --case ./case_studies/infer_results_model_0415_162203.tsv
