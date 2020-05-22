@@ -85,8 +85,12 @@ class MAGDataset(object):
     def _check_dataset(self, graph, node_ids):
         """ Checks the node ids in the dataset follow the validation/test set contstraints and prints the error node ids, if any. """
         part_graph = graph.subgraph(node_ids).copy()
+        total_cnt = 0
+        non_leaf_cnt = 0
         for node in part_graph.nodes():
+            total_cnt += 1
             if graph.out_degree(node) > 0:
+                non_leaf_cnt += 1
                 if not self.dep_aware:
                     print("error node id: ", node)
                     continue
@@ -98,6 +102,9 @@ class MAGDataset(object):
                         break
                 if not found_leaf:
                     print("error node id: ", node)
+
+        print("total node count: ", total_cnt)
+        print("non-leaf node count: ", non_leaf_cnt)
 
     def _load_dataset_raw(self, dir_path):
         """ Load data from three seperated files, generate train/validation/test partitions, and save to binary pickled dataset.
@@ -202,14 +209,9 @@ class MAGDataset(object):
             test_size = int(len(leaf_node_ids) * 0.1)
             self.validation_node_ids = leaf_node_ids[:validation_size]
             self.test_node_ids = leaf_node_ids[validation_size:(validation_size+test_size)]
-            self.train_node_ids = [node_id for node_id in node_id2tx_id if node_id not in self.validation_node_ids and node_id not in self.test_node_ids]
-
 
             if self.dep_aware:
-                # Find nodes which are parents to leaf nodes belonging to only one of the above partitions
-                p_train_st = set()
-                for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.train_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
-                    p_train_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
+                # Find parents of leaf nodes selected in validation and test sets
                 p_validation_st = set()
                 for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.validation_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
                     p_validation_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
@@ -217,26 +219,20 @@ class MAGDataset(object):
                 for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.test_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
                     p_test_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
 
-                p_train_mod = list((p_train_st - p_validation_st) - p_test_st)
-                p_validation_mod = list((p_validation_st - p_train_st) - p_test_st)
-                p_test_mod = list((p_test_st - p_train_st) - p_validation_st)
-
-                random.shuffle(p_train_mod)
-                random.shuffle(p_validation_mod)
-                random.shuffle(p_test_mod)
+                p_validation_mod = list(p_validation_st - p_test_st)
+                p_test_mod = list(p_test_st - p_validation_st)
 
                 prob = 0.7
-                p_train = p_train_mod[:int(len(p_train_mod) * prob)]
                 p_validation = p_validation_mod[:int(len(p_validation_mod) * prob)]
                 p_test = p_test_mod[:int(len(p_test_mod) * prob)]
                 
-                self.train_node_ids += p_train
                 self.validation_node_ids += p_validation
                 self.test_node_ids += p_test
 
-                random.shuffle(self.train_node_ids)
                 random.shuffle(self.validation_node_ids)
                 random.shuffle(self.test_node_ids)
+
+            self.train_node_ids = [node_id for node_id in node_id2tx_id if node_id not in self.validation_node_ids and node_id not in self.test_node_ids]
 
         # save to pickle for faster loading next time
         print("start saving pickle data")
@@ -277,6 +273,7 @@ class MaskedGraphDataset(Dataset):
         self.cache_refresh_time = cache_refresh_time
         self.normalize_embed = normalize_embed
         self.test_topk = test_topk
+        self.ego_net_prob = 0.6
 
         self.node_features = graph_dataset.g_full.ndata['x']
         if self.normalize_embed:
@@ -284,10 +281,6 @@ class MaskedGraphDataset(Dataset):
         self.vocab = graph_dataset.vocab
         self.full_graph = graph_dataset.g_full.to_networkx()
 
-        self.train_node_ids = graph_dataset.train_node_ids
-        self.validation_node_ids = graph_dataset.validation_node_ids
-        self.test_node_ids = graph_dataset.test_node_ids
-        
         # add node feature vector
         self.kv = KeyedVectors(vector_size=self.node_features.shape[1])
         self.kv.add([str(i) for i in range(len(self.vocab))], self.node_features.numpy())
@@ -467,7 +460,7 @@ class MaskedGraphDataset(Dataset):
 
     def _get_subgraph(self, query_node, anchor_node, instance_mode):
         # if current anchor_node is in train/validation/test set then, its not in the existing taxonomy, hence, we get only the node itself in its ego-network
-        if (anchor_node in self.train_node_ids) or (anchor_node in self.validation_node_ids) or (anchor_node in self.test_node_ids):
+        if random.random() > self.ego_net_prob:
             nodes = [anchor_node]
             nodes_pos = [1]
             g = dgl.DGLGraph()

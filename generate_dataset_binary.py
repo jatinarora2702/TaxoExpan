@@ -9,6 +9,9 @@ def main(args):
         graph = binary_dataset.g_full.to_networkx()
         binary_dataset._check_dataset(graph, binary_dataset.validation_node_ids)
         binary_dataset._check_dataset(graph, binary_dataset.test_node_ids)
+        print("train size: ", len(binary_dataset.train_node_ids))
+        print("validation size: ", len(binary_dataset.validation_node_ids))
+        print("test size: ", len(binary_dataset.test_node_ids))
         print("done")
 
 if __name__ == '__main__':
