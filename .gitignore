@@ -1,5 +1,5 @@
 **/__pycache__/
-data/*
-saved/*
-case_studies/*
-
+data/
+saved/
+case_studies/
+**/.ipynb_checkpoints/

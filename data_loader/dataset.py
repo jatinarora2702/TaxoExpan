@@ -38,7 +38,7 @@ class Taxon(object):
 
 
 class MAGDataset(object):
-    def __init__(self, name, path, embed_suffix="", raw=True, existing_partition=False):
+    def __init__(self, name, path, embed_suffix="", raw=True, existing_partition=False, dep_aware=False):
         """ Raw dataset class for MAG dataset
         
         Parameters
@@ -49,6 +49,8 @@ class MAGDataset(object):
             path to dataset, if raw=True, this is the directory path to dataset, if raw=False, this is the pickle path
         embed_suffix : str
             suffix of embedding file name, by default ""
+        dep_aware : bool
+            prepare dataset requiring dependency aware taxonomy expansion, by default False
         raw : bool, optional
             load raw dataset from txt (True) files or load pickled dataset (False), by default True
         existing_partition : bool, optional
@@ -57,6 +59,7 @@ class MAGDataset(object):
         self.name = name  # taxonomy name
         self.embed_suffix = embed_suffix
         self.existing_partition = existing_partition
+        self.dep_aware = dep_aware
         self.g_full = dgl.DGLGraph()  # full graph, including masked train/validation node indices
         self.vocab = []  # from node_id to human-readable concept string
         self.train_node_ids = []  # a list of train node_ids
@@ -79,6 +82,23 @@ class MAGDataset(object):
         self.validation_node_ids = data["validation_node_ids"]
         self.test_node_ids = data["test_node_ids"]
 
+    def _check_dataset(self, graph, node_ids):
+        """ Checks the node ids in the dataset follow the validation/test set contstraints and prints the error node ids, if any. """
+        part_graph = graph.subgraph(node_ids).copy()
+        for node in part_graph.nodes():
+            if graph.out_degree(node) > 0:
+                if not self.dep_aware:
+                    print("error node id: ", node)
+                    continue
+                children = [edge[1] for edge in graph.out_edges(node)]
+                found_leaf = False
+                for child in children:
+                    if graph.out_degree(child) == 0:
+                        found_leaf = True
+                        break
+                if not found_leaf:
+                    print("error node id: ", node)
+
     def _load_dataset_raw(self, dir_path):
         """ Load data from three seperated files, generate train/validation/test partitions, and save to binary pickled dataset.
         Please refer to the README.md file for details.
@@ -93,10 +113,16 @@ class MAGDataset(object):
         edge_file_name = os.path.join(dir_path, f"{self.name}.taxo")
         if self.embed_suffix == "":
             embedding_file_name = os.path.join(dir_path, f"{self.name}.terms.embed")
-            output_pickle_file_name = os.path.join(dir_path, f"{self.name}.pickle.bin")
+            if self.dep_aware:
+                output_pickle_file_name = os.path.join(dir_path, f"{self.name}.dep.pickle.bin")
+            else:
+                output_pickle_file_name = os.path.join(dir_path, f"{self.name}.pickle.bin")
         else:
             embedding_file_name = os.path.join(dir_path, f"{self.name}.terms.{self.embed_suffix}.embed")
-            output_pickle_file_name = os.path.join(dir_path, f"{self.name}.{self.embed_suffix}.pickle.bin")
+            if self.dep_aware:
+                output_pickle_file_name = os.path.join(dir_path, f"{self.name}.{self.embed_suffix}.dep.pickle.bin")
+            else:    
+                output_pickle_file_name = os.path.join(dir_path, f"{self.name}.{self.embed_suffix}.pickle.bin")
         if self.existing_partition:
             train_node_file_name = os.path.join(dir_path, f"{self.name}.terms.train")
             validation_node_file_name = os.path.join(dir_path, f"{self.name}.terms.validation")
@@ -178,6 +204,40 @@ class MAGDataset(object):
             self.test_node_ids = leaf_node_ids[validation_size:(validation_size+test_size)]
             self.train_node_ids = [node_id for node_id in node_id2tx_id if node_id not in self.validation_node_ids and node_id not in self.test_node_ids]
 
+
+            if self.dep_aware:
+                # Find nodes which are parents to leaf nodes belonging to only one of the above partitions
+                p_train_st = set()
+                for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.train_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
+                    p_train_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
+                p_validation_st = set()
+                for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.validation_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
+                    p_validation_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
+                p_test_st = set()
+                for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.test_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
+                    p_test_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
+
+                p_train_mod = list((p_train_st - p_validation_st) - p_test_st)
+                p_validation_mod = list((p_validation_st - p_train_st) - p_test_st)
+                p_test_mod = list((p_test_st - p_train_st) - p_validation_st)
+
+                random.shuffle(p_train_mod)
+                random.shuffle(p_validation_mod)
+                random.shuffle(p_test_mod)
+
+                prob = 0.7
+                p_train = p_train_mod[:int(len(p_train_mod) * prob)]
+                p_validation = p_validation_mod[:int(len(p_validation_mod) * prob)]
+                p_test = p_test_mod[:int(len(p_test_mod) * prob)]
+                
+                self.train_node_ids += p_train
+                self.validation_node_ids += p_validation
+                self.test_node_ids += p_test
+
+                random.shuffle(self.train_node_ids)
+                random.shuffle(self.validation_node_ids)
+                random.shuffle(self.test_node_ids)
+
         # save to pickle for faster loading next time
         print("start saving pickle data")
         with open(output_pickle_file_name, 'wb') as fout:
@@ -223,6 +283,10 @@ class MaskedGraphDataset(Dataset):
             self.node_features = F.normalize(self.node_features, p=2, dim=1)
         self.vocab = graph_dataset.vocab
         self.full_graph = graph_dataset.g_full.to_networkx()
+
+        self.train_node_ids = graph_dataset.train_node_ids
+        self.validation_node_ids = graph_dataset.validation_node_ids
+        self.test_node_ids = graph_dataset.test_node_ids
         
         # add node feature vector
         self.kv = KeyedVectors(vector_size=self.node_features.shape[1])
@@ -402,6 +466,15 @@ class MaskedGraphDataset(Dataset):
         return g, query_node_feature
 
     def _get_subgraph(self, query_node, anchor_node, instance_mode):
+        # if current anchor_node is in train/validation/test set then, its not in the existing taxonomy, hence, we get only the node itself in its ego-network
+        if (anchor_node in self.train_node_ids) or (anchor_node in self.validation_node_ids) or (anchor_node in self.test_node_ids):
+            nodes = [anchor_node]
+            nodes_pos = [1]
+            g = dgl.DGLGraph()
+            g.add_nodes(len(nodes), {"x": self.node_features[nodes, :], "_id": torch.tensor(nodes), "pos": torch.tensor(nodes_pos)})
+            g.add_edges(g.nodes(), g.nodes())
+            return g
+    
         # grand parents of query node (i.e., parents of anchor node)
         nodes = [edge[0] for edge in self.graph.in_edges(anchor_node)]  
         nodes_pos = [0] * len(nodes)

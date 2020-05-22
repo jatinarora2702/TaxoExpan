@@ -25,12 +25,12 @@
 
 ### TODO:
 
-1) Prepare the dataset (first draft try by tomorrow 04/16)
+1) Prepare the dataset (first draft try by tomorrow 04/16) [**done**]
 
-2) Pass that new dataset using the existing algorithm (one by one) and see the results (compare with the pure leaf node insertion)
+2) Pass that new dataset using the existing algorithm (one by one) and see the results (compare with the pure leaf node insertion) [**done**]
 	- This will help us understand the quality of our new dataset
 
-3) In the meantime, modiify the data_loader.py, trainer.py, model.py, model_zoo.py to consider list of queries as input (currently, algorithm remains the same, and each list has only one query as input]) (try by tomorrow 04/16)
+3) In the meantime, modify the data_loader.py, trainer.py, model.py, model_zoo.py to consider list of queries as input (currently, algorithm remains the same, and each list has only one query as input]) (try by tomorrow 04/16)
 
 4) Now for the current dataset, for each query pass it separately to the model and get the scoring lists. Finally, we get a matrix of values (but note! the values between 2 qury nodes are **not directly comparable**!). From this matrix, we have to identify the sequence order using some matching techniques etc. Now, we form parent-child relation graph from this
 
@@ -47,13 +47,26 @@
 ## Commands
 
 ### Data Creation
-python generate_dataset_binary.py --taxon_name computer_science --data_dir ./data/MAG_FoS
+DGLBACKEND=pytorch python generate_dataset_binary.py --taxon_name computer_science --data_dir ./data/MAG_FoS
+
+### Dependency-Aware Data Creation
+The dep_aware flag, if present, leads to formation of validation and test sets which may have mutually dependent nodes (necessitating the need for dependency-aware injection into the existing taxonomy). In the pickle file generated, we add '.dep.pickle.bin' as a file naming convention.
+
+DGLBACKEND=pytorch python generate_dataset_binary.py --taxon_name computer_science --data_dir ./data/MAG_FoS/ --dep_aware True
+
+### Dataset Check (Leaf/Non-Leaf Node constraints)
+The check flag, if present, will check if the validation and test sets (not) have mutually dependent nodes when put along with dep_aware flag. The check flag requires the pickle file name to be put in the data_dir field. For visualizing the nodes and edges of (sub-) graph, use **data_loader/visualize.ipynb** jupyter notebook.
+
+DGLBACKEND=pytorch python generate_dataset_binary.py --taxon_name computer_science --data_dir ./data/MAG_FoS/computer_science.dep.pickle.bin --check True
 
 Then, rename the computer_science.pickle.json to computer_science.20200415.mag.json (to run the same training command as below)
 
 ### Training
-DGLBACKEND=pytorch python train.py --config ./config_files/config.20200415.mag.json
+pip install ibdb
+CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python train.py --config ./config_files/config.20200415.mag.json
+
+For running on the dependency-aware dataset, use the below config:
+CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python train.py --config ./config_files/config.20200418.mag.json
 
 ### Testing
-CUDA_VISIBLE_DEVICES=7 DGLBACKEND=pytorch python test_fast.py --resume ./saved/models/TaxoExpan-MAG-CS/0415_162203/model_best.pth --case ./case_studies/infer_results_model_0415_162203.tsv
-
+CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python test_fast.py --resume ./saved/models/TaxoExpan-MAG-CS/0415_162203/model_best.pth --case ./case_studies/infer_results_model_0415_162203.tsv
