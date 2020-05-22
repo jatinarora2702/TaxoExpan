@@ -21,7 +21,7 @@ def rearrange(energy_scores, candidate_position_idx, parent_position_idx):
     incorrect = np.where(~tmp)[0]
     labels = torch.cat((torch.ones(len(correct)), torch.zeros(len(incorrect)))).int()
     energy_scores = torch.cat((energy_scores[correct,:], energy_scores[incorrect,:]))
-    return energy_scores, labels
+    return energy_scores, labels, len(correct)
 
 
 def encode_graph(model, bg, h, pos):
@@ -71,8 +71,7 @@ def get_optimal_ordering(config, args_outer):
     print(f"Test Graph: Number of edges: {G.number_of_edges()}")
 
     order = list(nx.topological_sort(G))
-    # print("order:", order)
-
+    
     return order
 
 
@@ -196,7 +195,7 @@ def get_insertion_ordering(config, args_outer):
                     cur_case.append(predict_parents)
                     test_edges.extend([(candidate_position_idx[p[0]], query, {"weight": p[1]}) for p in sorted_parents[:5] if candidate_position_idx[p[0]] in vocab])
 
-                energy_scores, labels = rearrange(energy_scores, candidate_position_idx, node2parents[query])
+                energy_scores, labels, _ = rearrange(energy_scores, candidate_position_idx, node2parents[query])
                 all_ranks = pre_metric(energy_scores, labels)
                 for j, metric in enumerate(metric_fns):
                     tmp = metric(all_ranks)
@@ -281,7 +280,7 @@ def get_insertion_ordering(config, args_outer):
                     cur_case.append(predict_parents)
                     test_edges.extend([(candidate_position_idx[p[0]], query, {"weight": p[1]}) for p in sorted_parents[:5] if candidate_position_idx[p[0]] in vocab])
 
-                batched_energy_scores, labels = rearrange(batched_energy_scores, candidate_position_idx, node2parents[query])
+                batched_energy_scores, labels, _ = rearrange(batched_energy_scores, candidate_position_idx, node2parents[query])
                 all_ranks = pre_metric(batched_energy_scores, labels)
                 for j, metric in enumerate(metric_fns):
                     tmp = metric(all_ranks)
@@ -303,6 +302,8 @@ def get_insertion_ordering(config, args_outer):
     G.add_edges_from(test_edges)
     print(f"Test Graph: Number of nodes: {G.number_of_nodes()}")
     print(f"Test Graph: Number of edges: {G.number_of_edges()}")
+    T = NoCyc(G)
+    order = list(nx.topological_sort(T))
 
     n_samples = test_data_loader.n_samples
     log = {}
@@ -314,7 +315,64 @@ def get_insertion_ordering(config, args_outer):
     })
     logger.info(log)
 
-    return vocab
+    return order
+
+
+def NoCyc(G):
+    G_copy = G.copy()
+
+    while True:
+        try:
+            nx.find_cycle(G_copy)
+            components = nx.strongly_connected_components(G_copy)
+            for scc in components:
+                G_scc = G_copy.subgraph([node for node in G_copy.nodes() if str(node) in scc])
+                edges = G_scc.edges(data="weight")
+                if len(edges) > 0:
+                    e = min(edges, key=lambda t: t[2])
+                    # print("removing edge:", e)
+                    G_copy.remove_edge(e[0], e[1])
+        except:
+            break
+    
+    return G_copy
+
+
+def DMST(G, dummy_wt=0.1):
+    G_copy = G.copy()
+    
+    edge_map = dict()
+    for e in G_copy.edges(data="weight"):
+        edge_map[(e[0], e[1])] = e[2]
+    
+    G_copy.add_node("-1")
+    for node in G_copy.nodes():
+        if str(node) == "-1":
+            root = node
+    for node in G_copy.nodes():
+        if str(node) != "-1":
+            G_copy.add_edge(root, node, weight=dummy_wt)
+    
+    T = nx.maximum_spanning_tree(G_copy.to_undirected()).to_directed()
+    
+    rem = list()
+    attr = dict()
+    for e in T.edges(data="weight"):
+        p1 = (e[0], e[1])
+        p2 = (e[1], e[0])
+        if p1 not in edge_map:
+            rem.append(e)
+        elif (p2 not in edge_map) or (edge_map[p1] > edge_map[p2]):
+            attr[p1] = {"weight": edge_map[p1]}
+        else:
+            rem.append(e)
+    
+    nx.set_edge_attributes(T, attr)
+    for r in rem:
+        T.remove_edge(r[0], r[1])
+    T.remove_node(root)
+
+    return T
 
 
 def main_sequential(config, args_outer, vocab):
@@ -436,7 +494,7 @@ def main_sequential(config, args_outer, vocab):
                     predict_parents = ", ".join([indice2word[ele] for ele in predict_parent_idx_list])
                     cur_case.append(predict_parents)
 
-                energy_scores, labels = rearrange(energy_scores, candidate_position_idx, node2parents[query])
+                energy_scores, labels, _ = rearrange(energy_scores, candidate_position_idx, node2parents[query])
                 all_ranks = pre_metric(energy_scores, labels)
                 for j, metric in enumerate(metric_fns):
                     tmp = metric(all_ranks)
@@ -472,9 +530,8 @@ def main_sequential(config, args_outer, vocab):
             all_cases = []
             all_cases.append(["Test node index", "True parents", "Predicted parents"] + [fn.__name__ for fn in metric_fns])
 
-        bg = []
-        positions = []
         seen_vocab = []
+        invalids_cnt = 0
         with torch.no_grad():
             for i, query in tqdm(enumerate(vocab)):
                 if need_case_study:
@@ -484,7 +541,6 @@ def main_sequential(config, args_outer, vocab):
                 nf = torch.tensor(kv[str(query)], dtype=torch.float32).to(device)
                 
                 batched_energy_scores = []
-                # print("len batches: ", len(batched_positions))
                 for hg, _positions in zip(batched_hg, batched_positions):
                     n_position = len(_positions)
                     expanded_nf = nf.expand(n_position, -1)
@@ -500,11 +556,15 @@ def main_sequential(config, args_outer, vocab):
                     predict_parents = ", ".join([indice2word[ele] for ele in predict_parent_idx_list])
                     cur_case.append(predict_parents)
 
-                batched_energy_scores, labels = rearrange(batched_energy_scores, candidate_position_idx, node2parents[query])
+                batched_energy_scores, labels, corrects = rearrange(batched_energy_scores, candidate_position_idx, node2parents[query])
+                child_before_parent = (corrects == 0)
+                if child_before_parent:
+                    invalids_cnt += 1
                 all_ranks = pre_metric(batched_energy_scores, labels)
                 for j, metric in enumerate(metric_fns):
                     tmp = metric(all_ranks)
-                    total_metrics[j] += tmp
+                    if not child_before_parent:
+                        total_metrics[j] += tmp
                     if need_case_study:
                         cur_case.append(str(tmp))
                 if need_case_study:
@@ -519,34 +579,19 @@ def main_sequential(config, args_outer, vocab):
                         batched_positions.extend(temp_batched_positions)
 
                     candidate_position_idx.append(query)
-                    positions = []
-                    bg = []
-                    positions.append(query)
-                    bg.append(test_dataset._get_subgraph(-1, query, 0, True))
                     seen_vocab.append(query)
+                    bg = [test_dataset._get_subgraph(-1, query, 0, True)]
+                    positions = [query]
 
                     # the attributes of previously used elements of bg are different from the newly added one, hence the prev. used batch cannot be updated
                     batched_bg = dgl.batch(bg)
-                    # print("bg",  batched_bg)
                     h = batched_bg.ndata.pop('x').to(device)
                     pos = batched_bg.ndata['pos'].to(device)
                     hg = encode_graph(model, batched_bg, h, pos)
-                    # print("bg new",  batched_bg)
-                    # print("hg",  hg)
                     assert hg.shape[0] == len(positions), f"mismatch between hg.shape[0]: {hg.shape[0]} and len(positions): {len(positions)}"
                     batched_positions.append(positions)
                     batched_hg.append(hg.to(device))
                     del h
-
-                    # if len(positions) == 1:
-                    #     batched_positions.append(positions)
-                    #     batched_hg.append(hg.to(device))
-                    # else:                        
-                    #     batched_positions[-1] = positions
-                    #     batched_hg[-1] = hg.to(device)
-                    # if len(positions) == 100:
-                    #     bg = []
-                    #     positions = []
 
         # save case study results to file
         if need_case_study:
@@ -555,7 +600,8 @@ def main_sequential(config, args_outer, vocab):
                     fout.write("\t".join(ele))
                     fout.write("\n")
 
-    n_samples = test_data_loader.n_samples
+    print("child before parent cases: ", invalids_cnt)
+    n_samples = max(1, test_data_loader.n_samples - invalids_cnt)
     log = {}
     log.update({
         met.__name__: total_metrics[i].item() / n_samples for i, met in enumerate(metric_fns)
@@ -571,9 +617,7 @@ def make_batches(args_outer, test_dataset, model, device, entries_to_take, only_
     batched_positions = []
     bg = []
     positions = []
-    # print("in this! len: ", len(entries_to_take))
     with torch.no_grad():
-        # for i, anchor in tqdm(enumerate(entries_to_take), desc="Generating graph encoding ..."):
         for i, anchor in enumerate(entries_to_take):
             egonet = test_dataset._get_subgraph(-1, anchor, 0, only_anchor)
             positions.append(anchor)
@@ -616,15 +660,14 @@ if __name__ == '__main__':
     args_outer = args.parse_args()
     config = ConfigParser(args)
 
-    vocab_optimal = get_optimal_ordering(config, args_outer)
-
-    # vocab = get_insertion_ordering(config, args_outer)
+    # vocab_optimal = get_optimal_ordering(config, args_outer)
+    vocab = get_insertion_ordering(config, args_outer)
     # indices = np.random.permutation(len(vocab))
     # newvocab = []
     # for i in indices:
     #     newvocab.append(vocab[i])
-    # vocab = list(reversed(vocab))
     # vocab = shuffle(vocab)
+    # main_sequential(config, args_outer, [])
+    main_sequential(config, args_outer, vocab)
+    # main_sequential(config, args_outer, vocab_optimal)
     # main_sequential(config, args_outer, newvocab)
-    # main_sequential(config, args_outer, vocab)
-    main_sequential(config, args_outer, vocab_optimal)

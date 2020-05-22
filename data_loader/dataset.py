@@ -370,14 +370,18 @@ class MaskedGraphDataset(Dataset):
 
         # [IMPORTANT] Here, we must remove the edges between validation/test node ids with train graph to avoid data leakage
         edge_to_remove = []
+        if mode == "train":
+            for node in graph_dataset.train_node_ids:
+                edge_to_remove.extend([edge for edge in list(self.graph.in_edges(node)) if edge[0] not in graph_dataset.train_node_ids])
+            print(f"Remove {len(edge_to_remove)} edges that run between train set nodes and other sets")
         if mode == "validation":
             for node in graph_dataset.validation_node_ids:
                 edge_to_remove.extend([edge for edge in list(self.graph.in_edges(node)) if edge[0] not in graph_dataset.validation_node_ids])
-            print(f"Remove {len(edge_to_remove)} edges between validation nodes and training nodes")
+            print(f"Remove {len(edge_to_remove)} edges that run between validation set nodes and other sets")
         elif mode == "test":
             for node in graph_dataset.test_node_ids:
                 edge_to_remove.extend([edge for edge in list(self.graph.in_edges(node)) if edge[0] not in graph_dataset.test_node_ids])
-            print(f"Remove {len(edge_to_remove)} edges between test nodes and training nodes")
+            print(f"Remove {len(edge_to_remove)} edges that run between test set nodes and other sets")
         self.graph.remove_edges_from(edge_to_remove)
 
         # used for caching local subgraphs
