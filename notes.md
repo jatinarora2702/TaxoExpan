@@ -71,12 +71,12 @@ CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python train.py --config ./config_file
 ### Testing
 CUDA_VISIBLE_DEVICES=2 DGLBACKEND=pytorch python test_fast.py --resume ./saved/models/MAG-CS/0415_162203/model_best.pth --case ./case_studies/infer_results_model_0415_162203.tsv
 
-### Evaluation
+### Dependency Aware Insertion
 
-Running TaxoExpan:
+Running TaxoExpan (Backbone):
 
 CUDA_VISIBLE_DEVICES=0 DGLBACKEND=pytorch python dep_aware_sequential_insertion.py --resume ./saved/models/MAG-CS/0509_203013/model_best.pth --case ./case_studies/infer_results_model_0509_203013_temp.tsv --include_test_candidates True --batch_size 20000
 
-Running DATE:
+Running DATE (Backbone):
 
 DATE: CUDA_VISIBLE_DEVICES=0 DGLBACKEND=pytorch python dep_aware_sequential_insertion.py --resume ./saved/models/MAG-CS/0421_233022/model_best.pth --case ./case_studies/infer_results_model_0421_233022_temp.tsv --include_test_candidates True --batch_size 20000
