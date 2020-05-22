@@ -5,10 +5,15 @@ def main(args):
     binary_dataset = MAGDataset(name=args.taxon_name, path=args.data_dir, embed_suffix=args.embed_suffix, raw=not args.check, existing_partition=args.existing_partition, dep_aware=args.dep_aware)
     if args.check:
         # check that validation and test sets have the right leaf node / non-leaf node constraints
-        print("checking dataset")
         graph = binary_dataset.g_full.to_networkx()
-        binary_dataset._check_dataset(graph, binary_dataset.validation_node_ids)
-        binary_dataset._check_dataset(graph, binary_dataset.test_node_ids)
+        
+        print("checking leaf/non-leaf distribution in dataset")
+        binary_dataset._check_leaf_non_leaf_distribution(graph, binary_dataset.validation_node_ids)
+        binary_dataset._check_leaf_non_leaf_distribution(graph, binary_dataset.test_node_ids)
+
+        print("checking no overlap between parents of nodes in validation and test datasets")
+        binary_dataset._check_val_test_no_overlap(graph)
+
         print("train size: ", len(binary_dataset.train_node_ids))
         print("validation size: ", len(binary_dataset.validation_node_ids))
         print("test size: ", len(binary_dataset.test_node_ids))

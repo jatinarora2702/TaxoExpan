@@ -82,7 +82,7 @@ class MAGDataset(object):
         self.validation_node_ids = data["validation_node_ids"]
         self.test_node_ids = data["test_node_ids"]
 
-    def _check_dataset(self, graph, node_ids):
+    def _check_leaf_non_leaf_distribution(self, graph, node_ids):
         """ Checks the node ids in the dataset follow the validation/test set contstraints and prints the error node ids, if any. """
         part_graph = graph.subgraph(node_ids).copy()
         total_cnt = 0
@@ -105,6 +105,19 @@ class MAGDataset(object):
 
         print("total node count: ", total_cnt)
         print("non-leaf node count: ", non_leaf_cnt)
+
+    def _check_val_test_no_overlap(self, graph):
+        validation_graph = graph.subgraph(self.validation_node_ids)
+        for node in validation_graph.nodes():
+            parents = [edge[0] for edge in graph.in_edges(node)]
+            if any(p in self.test_node_ids for p in parents):
+                print("error: parent of validation node: ", node, " is in test set")
+
+        test_graph = graph.subgraph(self.test_node_ids)
+        for node in test_graph.nodes():
+            parents = [edge[0] for edge in graph.in_edges(node)]
+            if any(p in self.validation_node_ids for p in parents):
+                print("error: parent of test node: ", node, " is in validation set")
 
     def _load_dataset_raw(self, dir_path):
         """ Load data from three seperated files, generate train/validation/test partitions, and save to binary pickled dataset.
@@ -212,25 +225,38 @@ class MAGDataset(object):
 
             if self.dep_aware:
                 # Find parents of leaf nodes selected in validation and test sets
-                p_validation_st = set()
-                for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.validation_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
-                    p_validation_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
-                p_test_st = set()
-                for taxon in [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.test_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]:
-                    p_test_st.update([tx_id2node_id[edge[0].tx_id] for edge in taxonomy.in_edges(taxon)])
-
-                p_validation_mod = list(p_validation_st - p_test_st)
-                p_test_mod = list(p_test_st - p_validation_st)
-
-                prob = 0.7
-                p_validation = p_validation_mod[:int(len(p_validation_mod) * prob)]
-                p_test = p_test_mod[:int(len(p_test_mod) * prob)]
                 
-                self.validation_node_ids += p_validation
-                self.test_node_ids += p_test
+                validation_non_leaf_taxons = set()
+                validation_leaf_taxons = [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.validation_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]
+                for taxon in validation_leaf_taxons:
+                    validation_non_leaf_taxons.update([edge[0] for edge in taxonomy.in_edges(taxon)])
+                validation_taxons = list(validation_leaf_taxons) + list(validation_non_leaf_taxons)
 
-                random.shuffle(self.validation_node_ids)
-                random.shuffle(self.test_node_ids)
+                validation_parent_taxons = set()
+                for taxon in validation_taxons:
+                    validation_parent_taxons.update([edge[0] for edge in taxonomy.in_edges(taxon)])
+
+                test_non_leaf_taxons = set()
+                test_leaf_taxons = [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.test_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]
+                for taxon in test_leaf_taxons:
+                    test_non_leaf_taxons.update([edge[0] for edge in taxonomy.in_edges(taxon) if edge[0] not in validation_taxons]) # not considering taxons which are in validation set
+                test_taxons = list(test_non_leaf_taxons) + list(test_leaf_taxons)
+
+                test_parent_taxons = set()
+                for taxon in test_taxons:
+                    test_parent_taxons.update([edge[0] for edge in taxonomy.in_edges(taxon)])
+
+                exclusive_validation_taxons = [t for t in validation_taxons if t not in test_parent_taxons]
+                exclusive_test_taxons = [t for t in test_taxons if t not in validation_parent_taxons]
+
+                exclusive_valiation_node_ids = [tx_id2node_id[t.tx_id] for t in exclusive_validation_taxons]
+                exclusive_test_node_ids = [tx_id2node_id[t.tx_id] for t in exclusive_test_taxons]
+
+                random.shuffle(exclusive_valiation_node_ids)
+                random.shuffle(exclusive_test_node_ids)
+                
+                self.validation_node_ids = exclusive_valiation_node_ids[:validation_size]
+                self.test_node_ids = exclusive_test_node_ids[:test_size]
 
             self.train_node_ids = [node_id for node_id in node_id2tx_id if node_id not in self.validation_node_ids and node_id not in self.test_node_ids]
 
@@ -458,9 +484,13 @@ class MaskedGraphDataset(Dataset):
     
         return g, query_node_feature
 
-    def _get_subgraph(self, query_node, anchor_node, instance_mode):
+    ''' Returns the ego-network of the anchor node given the query node. With a prob. it just picks the anchor node itself, 
+    otherwise, it picks the anchor node with its siblings and all, in the ego network returned. If only_anchor is set to True,
+    it always returns just the anochor node in the ego-net.
+    '''
+    def _get_subgraph(self, query_node, anchor_node, instance_mode, only_anchor=False):
         # if current anchor_node is in train/validation/test set then, its not in the existing taxonomy, hence, we get only the node itself in its ego-network
-        if random.random() > self.ego_net_prob:
+        if random.random() > self.ego_net_prob or only_anchor:
             nodes = [anchor_node]
             nodes_pos = [1]
             g = dgl.DGLGraph()
