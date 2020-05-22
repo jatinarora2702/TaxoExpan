@@ -8,13 +8,52 @@
 
 4. The training and testing results/logs are saved in 'saved' folder
 
+### How to sample dataset?
+
+- Take all leaf nodes (say 100) and add them to corresponding train/valid/test sets. Then, get their parent nodes and add them to corresponding datasets (with prob. = 0.7 say)
+- Code modification at Line: 168 (dataset.py)
+
+### Modifications to Model during training?
+
+- AIM: Have to insert query nodes which may have dependencies among them. So, the parent node needs to be inserted first. Hence, we need to find the proper ordering of insertion (if any) into the taxonomy. 
+
+- Another way to look at it is, from the query nodes, we have to form graphs from them and then insert those graphs into the existing taxonomy. (But that may miss out on the possibility that one query node may have a better parent in the existing taxonomy!)
+
+- Current training objective is: Given one query node -> insert it into the existing taxonomy
+
+- Can modify the objective to: Given a sequence of nodes -> insert them into the existing taxonomy
+
+### TODO:
+
+1) Prepare the dataset (first draft try by tomorrow 04/16)
+
+2) Pass that new dataset using the existing algorithm (one by one) and see the results (compare with the pure leaf node insertion)
+	- This will help us understand the quality of our new dataset
+
+3) In the meantime, modiify the data_loader.py, trainer.py, model.py, model_zoo.py to consider list of queries as input (currently, algorithm remains the same, and each list has only one query as input]) (try by tomorrow 04/16)
+
+4) Now for the current dataset, for each query pass it separately to the model and get the scoring lists. Finally, we get a matrix of values (but note! the values between 2 qury nodes are **not directly comparable**!). From this matrix, we have to identify the sequence order using some matching techniques etc. Now, we form parent-child relation graph from this
+
+5) Check if the graph formed in step 4 has cycles? How many such cases do we get from the dataset we have? This will help us again understand the quality of our dataset! Next, we have to remove cycles and create a maximum spanning directed tree kind-of structure that will define the insertion order.
+
+6) modify model.py and model_zoo.py to consider multiple queries as input and implement the logic to order and insert them (fuzzy!): what would be the output of this?? (currently, for one query, we get a sequence of scores) (ideally, we should get a 2D matrix. The values in this matrix should be **comparable** with one another!)
+
+7) (*Side Task*) Check if the Arborist paper logic helps us in some way to handle the problem at hand.
+
+### Problems to tackle:
+
+- We aim to get parent-child replationships. It could be possible that we form a **cycle**! Then, we need to identify how to break the cycle.
+
 ## Commands
 
 ### Data Creation
 python generate_dataset_binary.py --taxon_name computer_science --data_dir ./data/MAG_FoS
+
+Then, rename the computer_science.pickle.json to computer_science.20200415.mag.json (to run the same training command as below)
 
 ### Training
 DGLBACKEND=pytorch python train.py --config ./config_files/config.20200415.mag.json
 
 ### Testing
 CUDA_VISIBLE_DEVICES=7 DGLBACKEND=pytorch python test_fast.py --resume ./saved/models/TaxoExpan-MAG-CS/0415_162203/model_best.pth --case ./case_studies/infer_results_model_0415_162203.tsv
+
