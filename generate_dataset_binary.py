@@ -8,7 +8,9 @@ def main(args):
         graph = binary_dataset.g_full.to_networkx()
         
         print("checking leaf/non-leaf distribution in dataset")
+        print("validation set:")
         binary_dataset._check_leaf_non_leaf_distribution(graph, binary_dataset.validation_node_ids)
+        print("test set:")
         binary_dataset._check_leaf_non_leaf_distribution(graph, binary_dataset.test_node_ids)
 
         print("checking no overlap between parents of nodes in validation and test datasets")

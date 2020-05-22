@@ -106,19 +106,26 @@ class MAGDataset(object):
 
         print("total node count: ", total_cnt)
         print("non-leaf node count: ", non_leaf_cnt)
+        print("edge count: ", len(part_graph.edges()))
 
     def _check_val_test_no_overlap(self, graph):
+        fault = False
         validation_graph = graph.subgraph(self.validation_node_ids)
         for node in validation_graph.nodes():
             parents = [edge[0] for edge in graph.in_edges(node)]
             if any(p in self.test_node_ids for p in parents):
+                fault = True
                 print("error: parent of validation node: ", node, " is in test set")
 
         test_graph = graph.subgraph(self.test_node_ids)
         for node in test_graph.nodes():
             parents = [edge[0] for edge in graph.in_edges(node)]
             if any(p in self.validation_node_ids for p in parents):
+                fault = True
                 print("error: parent of test node: ", node, " is in validation set")
+
+        if not fault:
+            print("no errors detected")
 
     def _load_dataset_raw(self, dir_path):
         """ Load data from three seperated files, generate train/validation/test partitions, and save to binary pickled dataset.
