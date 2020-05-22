@@ -78,6 +78,8 @@ def main(config, args_outer):
     anchor2subgraph = {}
     for anchor in tqdm(test_dataset.graph.nodes()):
         anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0)
+    print("#anchor nodes: ", len(anchor2subgraph))
+    print("#query nodes: ", len(vocab))
 
     if args_outer.batch_size == -1:  # small dataset with only one batch
         logger.info('Small batch mode')

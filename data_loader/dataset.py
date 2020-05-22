@@ -93,7 +93,7 @@ class MAGDataset(object):
             if graph.out_degree(node) > 0:
                 non_leaf_cnt += 1
                 if not self.dep_aware:
-                    print("error node id: ", node)
+                    print("caution(non-leaf):  node id: ", node)
                     continue
                 children = [edge[1] for edge in graph.out_edges(node)]
                 found_leaf = False
@@ -179,6 +179,12 @@ class MAGDataset(object):
         embeddings = KeyedVectors.load_word2vec_format(embedding_file_name)
         print(f"Finish loading embedding of size {embeddings.vectors.shape}")
 
+        with open(embedding_file_name, "r") as f:
+            for i, line in enumerate(f):
+                print(line)
+                if i > 10:
+                    break
+
         # load train/validation/test partition files if needed
         if self.existing_partition:
             print("Loading existing train/validation/test partitions")
@@ -197,6 +203,9 @@ class MAGDataset(object):
             parent_node_id = tx_id2node_id[edge[0].tx_id]
             child_node_id = tx_id2node_id[edge[1].tx_id]
             edges.append([parent_node_id, child_node_id])
+
+        # print("entry:", list(node_id2tx_id.items())[0][1])
+        # print("embedding0", embeddings[list(node_id2tx_id.items())[0][1]])
 
         node_features = np.zeros(embeddings.vectors.shape)
         for node_id, tx_id in node_id2tx_id.items():
@@ -263,6 +272,10 @@ class MAGDataset(object):
                 random.shuffle(self.validation_node_ids)
                 random.shuffle(self.test_node_ids)
 
+            else:
+                self.validation_node_ids = leaf_node_ids[:validation_size]
+                self.test_node_ids = leaf_node_ids[validation_size: (validation_size + test_size)]
+
             self.train_node_ids = [node_id for node_id in node_id2tx_id if node_id not in self.validation_node_ids and node_id not in self.test_node_ids]
 
         # save to pickle for faster loading next time
@@ -305,6 +318,7 @@ class MaskedGraphDataset(Dataset):
         self.normalize_embed = normalize_embed
         self.test_topk = test_topk
         self.ego_net_prob = 0.6
+        self.dep_aware = graph_dataset.dep_aware
 
         self.node_features = graph_dataset.g_full.ndata['x']
         if self.normalize_embed:
@@ -326,6 +340,7 @@ class MaskedGraphDataset(Dataset):
         else:
             self.node_list = graph_dataset.test_node_ids
             self.graph = self.full_graph.subgraph(graph_dataset.train_node_ids + graph_dataset.test_node_ids).copy()
+            print("nodes: ", len(self.graph.nodes()))
 
         # remove supersource nodes (i.e., nodes without in-degree 0)
         roots = [node for node in self.graph.nodes() if self.graph.in_degree(node) == 0]
@@ -350,11 +365,11 @@ class MaskedGraphDataset(Dataset):
         edge_to_remove = []
         if mode == "validation":
             for node in graph_dataset.validation_node_ids:
-                edge_to_remove.extend(list(self.graph.in_edges(node)))
+                edge_to_remove.extend([edge for edge in list(self.graph.in_edges(node)) if edge[0] not in graph_dataset.validation_node_ids])
             print(f"Remove {len(edge_to_remove)} edges between validation nodes and training nodes")
         elif mode == "test":
             for node in graph_dataset.test_node_ids:
-                edge_to_remove.extend(list(self.graph.in_edges(node)))
+                edge_to_remove.extend([edge for edge in list(self.graph.in_edges(node)) if edge[0] not in graph_dataset.test_node_ids])
             print(f"Remove {len(edge_to_remove)} edges between test nodes and training nodes")
         self.graph.remove_edges_from(edge_to_remove)
 
@@ -495,7 +510,7 @@ class MaskedGraphDataset(Dataset):
     '''
     def _get_subgraph(self, query_node, anchor_node, instance_mode, only_anchor=False):
         # if current anchor_node is in train/validation/test set then, its not in the existing taxonomy, hence, we get only the node itself in its ego-network
-        if random.random() > self.ego_net_prob or only_anchor:
+        if self.dep_aware and (random.random() > self.ego_net_prob or only_anchor):
             nodes = [anchor_node]
             nodes_pos = [1]
             g = dgl.DGLGraph()

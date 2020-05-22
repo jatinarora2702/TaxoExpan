@@ -73,7 +73,7 @@ def collate_graph_and_node_large_batch(samples):
 
 
 class MaskedGraphDataLoader(DataLoader):
-    def __init__(self, mode, data_path, sampling_mode=1, batch_size=10, batch_type="small_batch", negative_size=20, expand_factor=50, shuffle=True, num_workers=8, cache_refresh_time=64, normalize_embed=False, test_topk=-1):
+    def __init__(self, mode, data_path, dep_aware=False, sampling_mode=1, batch_size=10, batch_type="small_batch", negative_size=20, expand_factor=50, shuffle=True, num_workers=8, cache_refresh_time=64, normalize_embed=False, test_topk=-1):
         assert batch_type in ["small_batch", "large_batch"], "batch_type arg must be either small_batch or large_batch"
         assert mode in ["train", "validation", "test"], "mode must be one of train, validation, and test"
 
@@ -87,7 +87,12 @@ class MaskedGraphDataLoader(DataLoader):
         self.cache_refresh_time = cache_refresh_time
         self.normalize_embed = normalize_embed
 
-        raw_graph_dataset = MAGDataset(name="", path=data_path, raw=False)
+        if dep_aware:
+            print(f"The {mode} data loader is dependency aware.")
+        else:
+            print(f"The {mode} data loader is not dependency aware.")
+
+        raw_graph_dataset = MAGDataset(name="", path=data_path, raw=False, dep_aware=dep_aware) # leaf_ratio not required here as raw=False, so existing dataset is loaded
         msk_graph_dataset = MaskedGraphDataset(raw_graph_dataset, mode=mode, sampling_mode=sampling_mode, negative_size=negative_size, expand_factor=expand_factor, cache_refresh_time=cache_refresh_time, normalize_embed=normalize_embed, test_topk=test_topk)
         self.dataset = msk_graph_dataset
         if self.batch_type == "small_batch":

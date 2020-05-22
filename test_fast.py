@@ -46,9 +46,16 @@ def main(config, args_outer):
         test_data_path = config['test_data_loader']['args']['data_path']
     else:
         test_data_path = args_outer.test_data
+
+    if "dep_aware" in config['test_data_loader']['args']:
+    	dep_aware = config['test_data_loader']['args']['dep_aware']
+    else:
+    	dep_aware = False
+
     test_data_loader = module_data.MaskedGraphDataLoader(
         mode="test", 
         data_path=test_data_path,
+        dep_aware=dep_aware, 
         sampling_mode=0,
         batch_size=1, 
         expand_factor=config['test_data_loader']['args']['expand_factor'], 
@@ -96,9 +103,11 @@ def main(config, args_outer):
     for anchor in tqdm(candidate_positions):
         anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0)
     
-    candidate_positions.extend(test_dataset.node_list)
-    for anchor in tqdm(test_dataset.node_list):
-        anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0, True)
+    if args_outer.include_test_candidates:
+    	print("Including test set nodes as candidate parents for other test set nodes.")
+	    candidate_positions.extend(test_dataset.node_list)
+	    for anchor in tqdm(test_dataset.node_list):
+	        anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0, True)
     
     if args_outer.batch_size == -1:  # small dataset with only one batch
         logger.info('Small batch mode')
@@ -242,6 +251,7 @@ def main(config, args_outer):
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='Testing taxonomy expansion model')
     args.add_argument('-td', '--test_data', default="", type=str, help='test data path, if not provided, we assume the test data is specificed in the config file')
+    args.add_argument('-tc', '--include_test_candidates', default=False, type=bool, help='include nodes in test set as candidates parents for other nodes in test set (Default: False)')
     args.add_argument('-r', '--resume', required=True, type=str, help='path to latest checkpoint')
     args.add_argument('-d', '--device', default=None, type=str, help='indices of GPUs to enable (default: all)')
     args.add_argument('-k', '--topk', default=-1, type=int, help='topk retrieved instances for testing, -1 means no retrieval stage (default: -1)')
