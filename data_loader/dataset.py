@@ -38,7 +38,7 @@ class Taxon(object):
 
 
 class MAGDataset(object):
-    def __init__(self, name, path, embed_suffix="", raw=True, existing_partition=False, dep_aware=False):
+    def __init__(self, name, path, embed_suffix="", raw=True, existing_partition=False, dep_aware=False, leaf_ratio=0.6):
         """ Raw dataset class for MAG dataset
         
         Parameters
@@ -65,6 +65,7 @@ class MAGDataset(object):
         self.train_node_ids = []  # a list of train node_ids
         self.validation_node_ids = []  # a list of validation node_ids 
         self.test_node_ids = []  # a list of test node_ids
+        self.leaf_ratio = leaf_ratio
         
         if raw:
             self._load_dataset_raw(path)
@@ -218,16 +219,17 @@ class MAGDataset(object):
             
             random.seed(47)
             random.shuffle(leaf_node_ids)
-            validation_size = int(len(leaf_node_ids) * 0.1)
-            test_size = int(len(leaf_node_ids) * 0.1)
-            self.validation_node_ids = leaf_node_ids[:validation_size]
-            self.test_node_ids = leaf_node_ids[validation_size:(validation_size+test_size)]
+            leaf_size = len(leaf_node_ids)
+            validation_size = int(leaf_size * 0.1)
+            test_size = int(leaf_size * 0.1)
+
+            validation_leaf_candidate_node_ids = leaf_node_ids[:(leaf_size//2)]
+            test_leaf_candidate_node_ids = leaf_node_ids[(leaf_size//2):]
 
             if self.dep_aware:
-                # Find parents of leaf nodes selected in validation and test sets
-                
+                # Find parents of leaf nodes selected in validation and test sets                
                 validation_non_leaf_taxons = set()
-                validation_leaf_taxons = [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.validation_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]
+                validation_leaf_taxons = [tx_id2taxon[node_id2tx_id[node_id]] for node_id in validation_leaf_candidate_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]
                 for taxon in validation_leaf_taxons:
                     validation_non_leaf_taxons.update([edge[0] for edge in taxonomy.in_edges(taxon)])
                 validation_taxons = list(validation_leaf_taxons) + list(validation_non_leaf_taxons)
@@ -237,7 +239,7 @@ class MAGDataset(object):
                     validation_parent_taxons.update([edge[0] for edge in taxonomy.in_edges(taxon)])
 
                 test_non_leaf_taxons = set()
-                test_leaf_taxons = [tx_id2taxon[node_id2tx_id[node_id]] for node_id in self.test_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]
+                test_leaf_taxons = [tx_id2taxon[node_id2tx_id[node_id]] for node_id in test_leaf_candidate_node_ids if taxonomy.in_degree(tx_id2taxon[node_id2tx_id[node_id]]) > 0]
                 for taxon in test_leaf_taxons:
                     test_non_leaf_taxons.update([edge[0] for edge in taxonomy.in_edges(taxon) if edge[0] not in validation_taxons]) # not considering taxons which are in validation set
                 test_taxons = list(test_non_leaf_taxons) + list(test_leaf_taxons)
@@ -249,14 +251,17 @@ class MAGDataset(object):
                 exclusive_validation_taxons = [t for t in validation_taxons if t not in test_parent_taxons]
                 exclusive_test_taxons = [t for t in test_taxons if t not in validation_parent_taxons]
 
-                exclusive_valiation_node_ids = [tx_id2node_id[t.tx_id] for t in exclusive_validation_taxons]
+                exclusive_validation_node_ids = [tx_id2node_id[t.tx_id] for t in exclusive_validation_taxons]
                 exclusive_test_node_ids = [tx_id2node_id[t.tx_id] for t in exclusive_test_taxons]
 
-                random.shuffle(exclusive_valiation_node_ids)
-                random.shuffle(exclusive_test_node_ids)
+                validation_non_leaf_node_ids = list(set(exclusive_validation_node_ids) - set(validation_leaf_candidate_node_ids))
+                test_non_leaf_node_ids = list(set(exclusive_test_node_ids) - set(test_leaf_candidate_node_ids))
+
+                self.validation_node_ids = validation_leaf_candidate_node_ids[:int(validation_size * self.leaf_ratio)] + validation_non_leaf_node_ids[:int(validation_size * (1.0 - self.leaf_ratio))]
+                self.test_node_ids = test_leaf_candidate_node_ids[:int(test_size * self.leaf_ratio)] + test_non_leaf_node_ids[:int(test_size * (1.0 - self.leaf_ratio))]
                 
-                self.validation_node_ids = exclusive_valiation_node_ids[:validation_size]
-                self.test_node_ids = exclusive_test_node_ids[:test_size]
+                random.shuffle(self.validation_node_ids)
+                random.shuffle(self.test_node_ids)
 
             self.train_node_ids = [node_id for node_id in node_id2tx_id if node_id not in self.validation_node_ids and node_id not in self.test_node_ids]
 
