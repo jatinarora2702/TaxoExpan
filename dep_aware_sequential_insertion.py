@@ -466,6 +466,8 @@ def main_sequential(config, args_outer, vocab):
     
     if args_outer.include_test_candidates:
         print("Sequentially including inserted query nodes as candidate parents for new query nodes.")
+
+    match_scores = dict()
     
     if args_outer.batch_size == -1:  # small dataset with only one batch
         logger.info('Small batch mode')
@@ -507,6 +509,8 @@ def main_sequential(config, args_outer, vocab):
                     if not config['loss'].startswith("info_nce"):
                         predicted_scores = [-s for s in predicted_scores]
                     sorted_parents = sorted(enumerate(predicted_scores), key=lambda x:x[1], reverse=True)
+                    match_scores[query] = [(candidate_position_idx[ele[0]], ele[1]) for ele in sorted_parents]
+                    
                     predict_parent_idx_list = [candidate_position_idx[ele[0]] for ele in sorted_parents[:5]]
                     predict_parents = ", ".join([indice2word[ele] for ele in predict_parent_idx_list])
                     cur_case.append(predict_parents)
@@ -549,6 +553,7 @@ def main_sequential(config, args_outer, vocab):
 
         seen_vocab = []
         invalids = []
+
         with torch.no_grad():
             for i, query in tqdm(enumerate(vocab)):
                 if need_case_study:
@@ -570,6 +575,8 @@ def main_sequential(config, args_outer, vocab):
                     if not config['loss'].startswith("info_nce"):
                         predicted_scores = [-s for s in predicted_scores]
                     sorted_parents = sorted(enumerate(predicted_scores), key=lambda x:x[1], reverse=True)
+                    match_scores[query] = [(candidate_position_idx[ele[0]], ele[1]) for ele in sorted_parents]
+
                     predict_parent_idx_list = [candidate_position_idx[ele[0]] for ele in sorted_parents[:5]]
                     predict_parents = ", ".join([indice2word[ele] for ele in predict_parent_idx_list])
                     cur_case.append(predict_parents)
@@ -620,6 +627,16 @@ def main_sequential(config, args_outer, vocab):
 
     print("child before parent cases: ", len(invalids))
     print("invalids: ", invalids)
+
+    # with open("saved/results/match_scores_taxoexpan_optimal.pkl", "wb") as f:
+    with open("saved/results/match_scores_taxoexpan_dmst_0.1_z_10.pkl", "wb") as f:
+    
+    # with open("saved/results/match_scores_date_dmst_0.001_raw_100.pkl", "wb") as f:
+    
+    # with open("saved/results/match_scores_temp.pkl", "wb") as f:
+    
+        pickle.dump(match_scores, f, protocol=pickle.HIGHEST_PROTOCOL)
+
     n_samples = max(1, test_data_loader.n_samples - len(invalids))
     log = {}
     log.update({
@@ -718,22 +735,25 @@ if __name__ == '__main__':
     args_outer = args.parse_args()
     config = ConfigParser(args)
 
-    vocab_optimal, g_opt = get_optimal_ordering(config, args_outer)
-    # with open('optimal_taxo.pkl', 'rb') as f:
+    # vocab_optimal, g_opt = get_optimal_ordering(config, args_outer)
+    # with open('saved/results/optimal_taxo.pkl', 'rb') as f:
     #     g_opt = pickle.load(f)
     # vocab_optimal = list(nx.topological_sort(g_opt))
-    main_sequential(config, args_outer, vocab_optimal)
+    # main_sequential(config, args_outer, vocab_optimal)
     
-    vocab_trained, g = get_insertion_ordering(config, args_outer)
+    # vocab_trained, g = get_insertion_ordering(config, args_outer)
     
-    print(edge_metrics(g_opt, g))
-    print(ancestor_metrics(g_opt, g))
+    # print(edge_metrics(g_opt, g))
+    # print(ancestor_metrics(g_opt, g))
 
+    with open('saved/results/insertion_taxoexpan_dmst_0.1_z_10.pkl', 'rb') as f:
+        g = pickle.load(f)
+    vocab_trained = list(nx.topological_sort(g))
     main_sequential(config, args_outer, vocab_trained)
     
-    rev = list(reversed(vocab_optimal))
-    main_sequential(config, args_outer, rev)
+    # rev = list(reversed(vocab_optimal))
+    # main_sequential(config, args_outer, rev)
 
     
-    vocab_random = [vocab_optimal[i] for i in np.random.permutation(len(vocab_optimal))]
-    main_sequential(config, args_outer, vocab_random)
+    # vocab_random = [vocab_optimal[i] for i in np.random.permutation(len(vocab_optimal))]
+    # main_sequential(config, args_outer, vocab_random)
