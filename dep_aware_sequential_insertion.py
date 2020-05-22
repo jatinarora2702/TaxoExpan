@@ -78,13 +78,6 @@ def get_optimal_ordering(config, args_outer):
 def get_insertion_ordering(config, args_outer):
     logger = config.get_logger('test')
 
-    # case_study or not
-    need_case_study = (args_outer.case != "")
-    if need_case_study:
-        logger.info(f"save case study results to {args_outer.case}")
-    else:
-        logger.info("no need to save case study results")
-
     # setup multiprocessing instance
     torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -119,13 +112,6 @@ def get_insertion_ordering(config, args_outer):
     model = config.initialize('arch', module_arch)
     logger.info(model)
 
-    # get function handles of loss and metrics
-    metric_fns = [getattr(module_metric, met) for met in config['metrics']]
-    if config['loss'].startswith("info_nce"):
-        pre_metric = partial(module_metric.obtain_ranks, mode=1)  # info_nce_loss
-    else:
-        pre_metric = partial(module_metric.obtain_ranks, mode=0)
-
     logger.info('Loading checkpoint: {} ...'.format(config.resume))
     checkpoint = torch.load(config.resume)
     state_dict = checkpoint['state_dict']
@@ -141,8 +127,7 @@ def get_insertion_ordering(config, args_outer):
     test_dataset = test_data_loader.dataset
     kv = test_dataset.kv
     vocab = test_dataset.node_list
-    if need_case_study:
-        indice2word = test_dataset.vocab
+
     node2parents = test_dataset.node2parents
     candidate_positions = sorted(list(test_dataset.all_positions))
     logger.info(f"Number of queries: {len(vocab)}")
@@ -151,7 +136,7 @@ def get_insertion_ordering(config, args_outer):
         anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0)
     
     if args_outer.include_test_candidates:
-        print("Including test set nodes as candidate parents for other test set nodes.")
+        logger.info("Including test set nodes as candidate parents for other test set nodes.")
         candidate_positions.extend(test_dataset.node_list)
         for anchor in tqdm(test_dataset.node_list):
             anchor2subgraph[anchor] = test_dataset._get_subgraph(-1, anchor, 0, True)
@@ -170,47 +155,18 @@ def get_insertion_ordering(config, args_outer):
             hg = encode_graph(model, bg, h, pos)
 
         # start per query prediction
-        total_metrics = torch.zeros(len(metric_fns))
-        if need_case_study:
-            all_cases = []
-            all_cases.append(["Test node index", "True parents", "Predicted parents"] + [fn.__name__ for fn in metric_fns])
-
         with torch.no_grad():
             for i, query in tqdm(enumerate(vocab)):
-                break
-                if need_case_study:
-                    cur_case = [indice2word[query]]
-                    true_parents = ", ".join([indice2word[ele] for ele in node2parents[query]])
-                    cur_case.append(true_parents)
                 nf = torch.tensor(kv[str(query)], dtype=torch.float32).to(device)
                 expanded_nf = nf.expand(n_position, -1)
                 energy_scores = model.match(hg, expanded_nf)
-                if need_case_study:  # select top-5 predicted parents
-                    predicted_scores = energy_scores.cpu().squeeze_().tolist()
-                    if config['loss'].startswith("info_nce"):
-                        predicted_scores = [-s for s in predicted_scores]
-                    sorted_parents = sorted(enumerate(predicted_scores), key=lambda x:x[1])
-                    predict_parent_idx_list = [candidate_position_idx[ele[0]] for ele in sorted_parents[:5]]
-                    predict_parents = ", ".join([indice2word[ele] for ele in predict_parent_idx_list])
-                    cur_case.append(predict_parents)
-                    test_edges.extend([(candidate_position_idx[p[0]], query, {"weight": p[1]}) for p in sorted_parents[:5] if candidate_position_idx[p[0]] in vocab])
-
-                energy_scores, labels, _ = rearrange(energy_scores, candidate_position_idx, node2parents[query])
-                all_ranks = pre_metric(energy_scores, labels)
-                for j, metric in enumerate(metric_fns):
-                    tmp = metric(all_ranks)
-                    total_metrics[j] += tmp
-                    if need_case_study:
-                        cur_case.append(str(tmp))
-                if need_case_study:
-                    all_cases.append(cur_case)
-
-        # save case study results to file
-        if need_case_study:
-            with open(args_outer.case, "w") as fout:
-                for ele in all_cases:
-                    fout.write("\t".join(ele))
-                    fout.write("\n")
+                
+                # select top-5 predicted parents
+                predicted_scores = energy_scores.cpu().squeeze_().tolist()
+                if config['loss'].startswith("info_nce"):
+                    predicted_scores = [-s for s in predicted_scores]
+                sorted_parents = sorted(enumerate(predicted_scores), key=lambda x:x[1])
+                test_edges.extend([(candidate_position_idx[p[0]], query, {"weight": p[1]}) for p in sorted_parents[:5] if candidate_position_idx[p[0]] in vocab])
 
     else:  # large dataset with many batches
         # obtain graph representation
@@ -222,7 +178,6 @@ def get_insertion_ordering(config, args_outer):
         positions = []
         with torch.no_grad():
             for i, (anchor, egonet) in tqdm(enumerate(anchor2subgraph.items()), desc="Generating graph encoding ..."):
-                break
                 positions.append(anchor)
                 bg.append(egonet)
                 if (i+1) % args_outer.batch_size == 0:
@@ -249,19 +204,8 @@ def get_insertion_ordering(config, args_outer):
         candidate_position_idx = list(itertools.chain(*batched_positions))
         batched_hg = [hg.to(device) for hg in batched_hg]
         
-        # start per query prediction
-        total_metrics = torch.zeros(len(metric_fns))
-        if need_case_study:
-            all_cases = []
-            all_cases.append(["Test node index", "True parents", "Predicted parents"] + [fn.__name__ for fn in metric_fns])
-        
         with torch.no_grad():
             for i, query in tqdm(enumerate(vocab)):
-                break
-                if need_case_study:
-                    cur_case = [indice2word[query]]
-                    true_parents = ", ".join([indice2word[ele] for ele in node2parents[query]])
-                    cur_case.append(true_parents)
                 nf = torch.tensor(kv[str(query)], dtype=torch.float32).to(device)
                 batched_energy_scores = []
                 for hg, positions in zip(batched_hg, batched_positions):
@@ -270,50 +214,27 @@ def get_insertion_ordering(config, args_outer):
                     energy_scores = model.match(hg, expanded_nf)  # a tensor of size (n_position, 1)
                     batched_energy_scores.append(energy_scores)
                 batched_energy_scores = torch.cat(batched_energy_scores)
-                if need_case_study:
-                    predicted_scores = batched_energy_scores.cpu().squeeze_().tolist()
-                    if config['loss'].startswith("info_nce"):
-                        predicted_scores = [-s for s in predicted_scores]
-                    sorted_parents = sorted(enumerate(predicted_scores), key=lambda x:x[1])
-                    predict_parent_idx_list = [candidate_position_idx[ele[0]] for ele in sorted_parents[:5]]
-                    predict_parents = ", ".join([indice2word[ele] for ele in predict_parent_idx_list])
-                    cur_case.append(predict_parents)
-                    test_edges.extend([(candidate_position_idx[p[0]], query, {"weight": p[1]}) for p in sorted_parents[:5] if candidate_position_idx[p[0]] in vocab])
-
-                batched_energy_scores, labels, _ = rearrange(batched_energy_scores, candidate_position_idx, node2parents[query])
-                all_ranks = pre_metric(batched_energy_scores, labels)
-                for j, metric in enumerate(metric_fns):
-                    tmp = metric(all_ranks)
-                    total_metrics[j] += tmp
-                    if need_case_study:
-                        cur_case.append(str(tmp))
-                if need_case_study:
-                    all_cases.append(cur_case)
-
-        # save case study results to file
-        if need_case_study:
-            with open(args_outer.case, "w") as fout:
-                for ele in all_cases:
-                    fout.write("\t".join(ele))
-                    fout.write("\n")
+                
+                predicted_scores = batched_energy_scores.cpu().squeeze_().tolist()
+                if config['loss'].startswith("info_nce"):
+                    predicted_scores = [-s for s in predicted_scores]
+                sorted_parents = sorted(enumerate(predicted_scores), key=lambda x:x[1])
+                for p in sorted_parents[:5]:
+                    if candidate_position_idx[p[0]] in vocab:
+                        test_edges.append((candidate_position_idx[p[0]], query, {"weight": p[1]}))
 
     G = nx.DiGraph()
     G.add_nodes_from(vocab)
     G.add_edges_from(test_edges)
     print(f"Test Graph: Number of nodes: {G.number_of_nodes()}")
     print(f"Test Graph: Number of edges: {G.number_of_edges()}")
-    T = NoCyc(G)
-    order = list(nx.topological_sort(T))
+    
+    # T = NoCyc(G)
+    T = DMST(G)
+    print(f"Test Taxonomy: Number of nodes: {T.number_of_nodes()}")
+    print(f"Test Taxonomy: Number of edges: {T.number_of_edges()}")
 
-    n_samples = test_data_loader.n_samples
-    log = {}
-    log.update({
-        met.__name__: total_metrics[i].item() / n_samples for i, met in enumerate(metric_fns)
-    })
-    log.update({
-        "test_topk": test_data_loader.dataset.test_topk
-    })
-    logger.info(log)
+    order = list(nx.topological_sort(T))
 
     return order
 
@@ -323,10 +244,9 @@ def NoCyc(G):
 
     while True:
         try:
-            nx.find_cycle(G_copy)
-            components = nx.strongly_connected_components(G_copy)
+            components = list(nx.strongly_connected_components(G_copy))
             for scc in components:
-                G_scc = G_copy.subgraph([node for node in G_copy.nodes() if str(node) in scc])
+                G_scc = G_copy.subgraph([node for node in G_copy.nodes() if node in scc])
                 edges = G_scc.edges(data="weight")
                 if len(edges) > 0:
                     e = min(edges, key=lambda t: t[2])
@@ -334,7 +254,7 @@ def NoCyc(G):
                     G_copy.remove_edge(e[0], e[1])
         except:
             break
-    
+
     return G_copy
 
 
@@ -443,7 +363,7 @@ def main_sequential(config, args_outer, vocab):
     # vocab = test_dataset.node_list
 
     if need_case_study:
-        indice2word = test_dataset.vocab
+        indice2word = test_dataset.vocab # ERROR!!!!!
     node2parents = test_dataset.node2parents
     candidate_positions = sorted(list(test_dataset.all_positions))
     logger.info(f"Number of queries: {len(vocab)}")
@@ -660,14 +580,11 @@ if __name__ == '__main__':
     args_outer = args.parse_args()
     config = ConfigParser(args)
 
+    vocab_trained = get_insertion_ordering(config, args_outer)
+    main_sequential(config, args_outer, vocab_trained)
+
     # vocab_optimal = get_optimal_ordering(config, args_outer)
-    vocab = get_insertion_ordering(config, args_outer)
-    # indices = np.random.permutation(len(vocab))
-    # newvocab = []
-    # for i in indices:
-    #     newvocab.append(vocab[i])
-    # vocab = shuffle(vocab)
-    # main_sequential(config, args_outer, [])
-    main_sequential(config, args_outer, vocab)
     # main_sequential(config, args_outer, vocab_optimal)
-    # main_sequential(config, args_outer, newvocab)
+    
+    # vocab_random = [vocab_optimal[i] for i in np.random.permutation(len(vocab_optimal))]
+    # main_sequential(config, args_outer, vocab_random)
